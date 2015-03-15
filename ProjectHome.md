@@ -1,0 +1,1 @@
+Was eager to learn how to write operating system and did some study, follow up, spent sleepless night and finally got something working :)
