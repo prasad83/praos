@@ -1,0 +1,137 @@
+#include <globals.h>
+#include <x86.h>
+#include <conio.h>
+#include <cursor.h>
+#include <stdio.h>
+#include <string.h>
+
+/* The code for setvect() and getvect() in kboot.asm depends on
+ * the layout of this structure. */
+typedef struct {
+	unsigned access_byte, eip;
+} vector_t;
+
+/* IMPORTS from kboot.asm */
+void setvect(vector_t *v, unsigned vect_num);
+void getvect(vector_t *v, unsigned vect_num);
+
+void delay(unsigned long count) {
+	unsigned long temp = count;	
+  while(count-- > 0) {
+		temp = count+1;
+		move2xy(0,15);
+		print(unum2str(temp));
+	}	
+}
+
+const char OKSTR[] =    { "[  OK  ]" };
+const char ERRORSTR[] = { "[ERROR!]" };
+
+int disprow = 0, dispcol = 0;
+
+void printok(unsigned lineno) {
+	unsigned okstr_x = SCREEN_WIDTH - strlen(OKSTR);
+	move2xy(okstr_x,lineno);
+	print("[  ");printclr("OK",COLOR_GREEN);print("  ]");
+}	
+
+void printerror(unsigned lineno) {
+	unsigned errorstr_x = SCREEN_WIDTH - strlen(ERRORSTR);
+	move2xy(errorstr_x,lineno);
+	print("[");printclr("ERROR!",COLOR_RED);print("]");
+}
+
+static void custom_handler(regs_t *regs) {
+	move2xy(2,++disprow);
+	fault_message(regs->which_int);
+	printclr("INSIDE Custom Handler :)", getcolor(COLOR_BRIGHTWHITE,COLOR_BROWN));
+}
+
+void shutdown() {
+	move2xy(0,++cursor_y);
+	print("Shutting down...");
+  return;
+}
+
+int main() {	
+	vector_t v;
+	vector_t old_v, new_v;
+
+	SCREEN_WIDTH = *(unsigned short *)0x44A;
+	SCREEN_HEIGHT= *(unsigned char *)0x484+1;
+
+  print("Clearing the screen...");
+  clrscr();
+
+	/* Show the booting message */  
+	move2xy(dispcol,disprow); 
+	printclr("Prasad OS BOOTING...",getcolor(COLOR_BRIGHTWHITE,COLOR_BLUE)); 
+	printok(disprow++); 
+
+	/* Check the interrupt handler setup, setvect() and getvect() */
+	move2xy(dispcol,disprow);
+	print("Checking Assembly Interrupt Setup...");
+	move2xy( SCREEN_WIDTH - strlen("[ .... ]"),disprow++);
+	print("[ .... ]");
+
+	/* Try interrupt only after setting up the handler, as the default
+   * action is to halt/get into infinite loop see "lib/x86/interrupt.c" */
+	/*move2xy(dispcol+2,disprow++);
+	print("Trying INT 0x30...");
+	__asm__ __volatile__("int %0" : : "i"(0x30));
+	printok(disprow++);*/
+
+	move2xy(dispcol+2,disprow);
+	print("Saving INT 0x30 vector...");
+	getvect(&old_v,0x30);
+	printok(disprow++);
+
+	move2xy(dispcol+2,disprow);
+	print("Installing new INT 0x30 handler...");
+	new_v.eip = (unsigned) custom_handler;
+	new_v.access_byte = 0x8E;
+	setvect(&new_v,0x30);
+	printok(disprow++);
+
+	move2xy(dispcol+2,disprow);
+	print("Trying INT 0x30 to check custom handler...");
+	__asm__ __volatile__("int %0" : : "i"(0x30));
+	printok(disprow++);
+
+	move2xy(dispcol+2,disprow);
+	print("Restoring INT 0x30's original handler...");
+	setvect(&old_v,0x30);
+	printok(disprow++);
+
+	/* Setup keyboard interrupt handler */
+	move2xy(dispcol,disprow);	
+	print("Initializing KEYBOARD...");	
+	init_keyboard();	
+	/* let us not save the old vector */
+	v.eip = (unsigned) sys_keyboard_irq;
+	v.access_byte = 0x8E; /* present, ring 0, '386 interrupt gate */
+	setvect(&v, 0x21);
+	printok(disprow++);	
+
+	move2xy(dispcol,disprow);
+	print("Enabling Hardware interrupts...");	
+	enable(); /* This enables interrupts to be triggered, so user can now use keyboard */
+	printok(disprow++);
+
+	move2xy(dispcol,disprow); 
+	mprintf("Can accept from Keyboard...");
+	printok(disprow++);
+	
+	move2xy(dispcol,disprow);	
+	printclr("Use CTRL+ALT+DEL to reboot...",getcolor(COLOR_BRIGHTWHITE,COLOR_BLUE)); 
+
+	/* Position cursor for input */
+	move2xy(0,++disprow);
+
+	/* Hang forever :) */ 
+	while(1);
+
+	shutdown();	
+	return 0;
+}
+
